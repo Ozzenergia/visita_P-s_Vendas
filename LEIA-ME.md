@@ -1,7 +1,32 @@
-# OZZ Pós-venda: app offline (PWA) — versão 1.0.0
+# OZZ Pós-venda: app offline (PWA) — versão 1.1.0
 
-Esta versão guarda as visitas **no próprio aparelho** e funciona sem internet.
-A sincronização com a Planilha Google (Apps Script) entra na próxima versão.
+O app guarda as visitas **no próprio aparelho** e funciona sem internet.
+Quando há internet, envia as visitas para a **planilha central** (Planilha Google + Apps Script).
+
+## Planilha central (fazer uma vez)
+
+1. Com a conta Google da OZZ, crie uma planilha nova (ex.: "OZZ Visitas").
+2. Menu **Extensões → Apps Script**. Apague o código que aparece e cole todo o conteúdo de `apps-script/Codigo.gs`. Salve (ícone de disquete).
+3. Volte à planilha e **recarregue a página**. Aparece o menu **OZZ Visitas**.
+4. **OZZ Visitas → Configurar planilha.** Autorize o acesso pedido pelo Google
+   (se aparecer "O Google não verificou este app": **Avançado → Acessar ... (não seguro)**; o script é seu).
+   A planilha cria as abas **Visitas** e **Indicações**, a pasta "OZZ Visitas – Assinaturas" no Drive
+   e mostra o **código de sincronização** (OZZ-XXXX-XXXX-XXXX).
+5. No Apps Script: **Implantar → Nova implantação → engrenagem → App da Web**.
+   - Executar como: **Eu**
+   - Quem pode acessar: **Qualquer pessoa**
+   Clique em **Implantar** e copie a **URL do app da Web** (termina em `/exec`).
+6. Coloque essa URL em `SYNC_URL`, no início do `app.js`, e publique uma versão nova.
+7. Em cada iPad: **Ajustes → Código de sincronização**, **Testar conexão** e **Salvar ajustes**.
+
+"Qualquer pessoa" só significa que o app consegue falar com o script. Sem o código de
+sincronização, o script recusa tudo, e ele nunca devolve dados, só recebe.
+Para trocar o código: menu **OZZ Visitas → Gerar novo código** e atualize os iPads.
+
+Ao alterar o `Codigo.gs` depois: cole o novo código, salve e use **Implantar → Gerenciar implantações →
+editar (lápis) → Versão: Nova versão → Implantar**. Assim a URL continua a mesma.
+
+**Não renomeie nem apague colunas da aba Visitas e Indicações.** Para análises, crie outras abas.
 
 ## O que tem na pasta
 
@@ -53,8 +78,9 @@ Os ajustes ficam salvos só naquele aparelho.
 - **Não apague o ícone do app** do iPad: isso apaga as visitas guardadas nele.
   Antes de trocar ou formatar um aparelho, use **Ajustes → Fazer backup**.
 - Não use o app numa aba de **navegação privada**.
-- Enquanto a sincronização não estiver ligada, cada aparelho vê **só as próprias visitas**.
-  Para juntar, use **Exportar planilha** em cada um, ou **Fazer backup** num e **Restaurar backup** no outro.
+- O painel (aba Visitas) de cada aparelho mostra **só as visitas daquele aparelho**.
+  A visão de todos juntos fica na planilha central.
+- **Apagar visita** (no detalhe da visita) apaga no aparelho e na planilha central, e manda a assinatura para a lixeira do Drive.
 
 ## Publicar uma versão nova
 

@@ -163,6 +163,13 @@ td.num{font-variant-numeric:tabular-nums;font-weight:700}
 .sigimg{background:#fff;border-radius:8px;border:1px solid var(--line);max-width:100%}
 .muted{color:var(--muted)}
 .divider{border:0;border-top:1px solid var(--line);margin:0}
+.sync-status{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;font-size:14px;color:var(--muted);margin:0 0 14px}
+.sync-status .sync-txt{flex:1 1 280px}
+.card .sync-status{margin:0}
+.grid-chave{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px 14px;align-items:end}
+@media (max-width:560px){.grid-chave{grid-template-columns:minmax(0,1fr)}}
+.btn.bad{color:var(--bad);border-color:var(--bad)}
+.btn.badfill{background:var(--bad);color:#fff}
 .version{font-size:13px;color:var(--muted);text-align:center;margin-top:18px}
 @media (prefers-reduced-motion:no-preference){.card{animation:in .25s ease-out}@keyframes in{from{transform:translateY(6px)}to{transform:none}}}
 </style>
@@ -373,7 +380,7 @@ td.num{font-variant-numeric:tabular-nums;font-weight:700}
 
   <!-- ============ LISTA ============ -->
   <section id="view-lista" hidden>
-    <p class="note">Visitas registradas <b>neste aparelho</b>. A sincronização com a planilha da OZZ entra na próxima versão.</p>
+    <div class="sync-status"><span class="sync-txt"></span><button class="btn ghost sm sync-bt" type="button" hidden>Enviar agora</button></div>
     <div class="stats" id="stats"></div>
     <div class="listhead">
       <div class="filters" id="filtros" role="group" aria-label="Filtrar por perfil">
@@ -404,12 +411,21 @@ td.num{font-variant-numeric:tabular-nums;font-weight:700}
           <input type="url" id="a_google" placeholder="https://g.page/r/...">
         </label>
         <label class="f">Nome do funcionário neste tablet <small>Preenche automaticamente o campo da visita.</small><input type="text" id="a_visitante" autocomplete="off"></label>
+        <div id="w-chave" class="grid-chave">
+          <label class="f">Código de sincronização
+            <small>Liga este aparelho à planilha central da OZZ. Peça o código ao responsável (formato OZZ-XXXX-XXXX-XXXX).</small>
+            <input type="text" id="a_chave" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="OZZ-XXXX-XXXX-XXXX">
+          </label>
+          <div><button type="button" class="btn ghost" id="bt-testar">Testar conexão</button></div>
+        </div>
+        <p id="w-chave-off" class="muted" style="margin:0;font-size:14px" hidden>A planilha central ainda não foi ligada nesta versão do app.</p>
         <p id="a_msg" class="muted" style="margin:0" hidden></p>
         <div class="row end"><button type="submit" class="btn pri">Salvar ajustes</button></div>
       </form>
 
       <section class="card">
         <div><h2>Dados neste aparelho</h2><p class="lead" id="d-resumo"></p></div>
+        <div class="sync-status"><span class="sync-txt"></span><button class="btn ghost sm sync-bt" type="button" hidden>Enviar agora</button></div>
         <div class="row">
           <button class="btn ghost" id="bt-exportar-todas" type="button">Exportar planilha</button>
           <button class="btn ghost" id="bt-backup" type="button">Fazer backup</button>

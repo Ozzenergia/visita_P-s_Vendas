@@ -1,7 +1,13 @@
 /* OZZ Pós-venda — versão PWA (dados guardados no próprio aparelho) */
 (function(){
 "use strict";
-const VERSAO_APP="1.0.0";
+const VERSAO_APP="1.1.0";
+
+/* Endereço do script da planilha central (Apps Script → Implantar → App da Web → URL).
+   Pode ficar público: sem o código de sincronização, digitado em Ajustes, ninguém grava nada. */
+const SYNC_URL="";
+/* Link de avaliação da OZZ no Google usado quando o aparelho não tiver um link próprio em Ajustes. */
+const GOOGLE_PADRAO="";
 
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -31,6 +37,7 @@ const Banco={
   pegar(id){return this._tx("visitas","readonly",s=>s.get(id))},
   gravar(v){return this._tx("visitas","readwrite",s=>s.put(v))},
   gravarVarias(vs){return this._tx("visitas","readwrite",s=>{vs.forEach(v=>s.put(v))})},
+  apagarVarias(ids){return this._tx("visitas","readwrite",s=>{ids.forEach(id=>s.delete(id))})},
   async kvGet(k,d){try{const r=await this._tx("kv","readonly",s=>s.get(k));return r?r.v:d}catch(e){return d}},
   kvSet(k,v){return this._tx("kv","readwrite",s=>s.put({k,v}))},
   kvDel(k){return this._tx("kv","readwrite",s=>s.delete(k))}
@@ -44,7 +51,8 @@ const STEPS=[["func","Dados"],["cli","Pesquisa"],["sig","Assinatura"],["google",
 const PERFIL={promotor:["Promotor","p"],neutro:["Neutro","n"],detrator:["Detrator","d"]};
 const perfilDe=n=>n>=9?"promotor":n>=7?"neutro":"detrator";
 
-let config={googleUrl:"",visitante:""}, cache=[], visita=null, filtro="todos";
+let config={googleUrl:"",visitante:"",chave:""}, cache=[], visita=null, filtro="todos";
+const linkGoogle=()=>config.googleUrl||GOOGLE_PADRAO;
 
 async function recarregar(){try{cache=await Banco.todas()}catch(e){cache=[];$("#bn-erro").hidden=false}}
 
@@ -52,7 +60,8 @@ async function recarregar(){try{cache=await Banco.todas()}catch(e){cache=[];$("#
 function showView(v){
   ["nova","lista","ajustes"].forEach(x=>{$("#view-"+x).hidden=x!==v;$("#tab-"+x).setAttribute("aria-current",x===v)});
   if(v==="lista")recarregar().then(renderLista);
-  if(v==="ajustes"){$("#a_google").value=config.googleUrl||"";$("#a_visitante").value=config.visitante||"";$("#a_msg").hidden=true;$("#d-msg").hidden=true;recarregar().then(renderResumo)}
+  if(v==="ajustes"){$("#a_google").value=config.googleUrl||"";$("#a_google").placeholder=GOOGLE_PADRAO||"https://g.page/r/...";$("#a_visitante").value=config.visitante||"";$("#a_chave").value=config.chave||"";
+    $("#a_msg").hidden=true;$("#d-msg").hidden=true;$("#w-chave").hidden=!SYNC_URL;$("#w-chave-off").hidden=!!SYNC_URL;recarregar().then(renderResumo)}
   window.scrollTo(0,0);
 }
 $$("nav button").forEach(b=>b.onclick=()=>showView(b.dataset.view));
@@ -158,7 +167,7 @@ function montarGoogle(){
   const d=visita.perfil==="detrator";
   $("#g-titulo").textContent="Obrigado pela sua resposta!";
   $("#g-texto").textContent=d?"Vamos tratar o que você nos contou. Nossa equipe retorna em até 48 horas. Se quiser, você também pode deixar sua avaliação pública no Google.":"Sua opinião ajuda outras famílias e empresas a conhecerem a OZZ. Se puder, deixe uma avaliação no Google. Leva um minuto.";
-  const url=config.googleUrl;
+  const url=linkGoogle();
   $("#qrcode").innerHTML="";$("#qrcode").hidden=!url;$("#g-semlink").hidden=!!url;$("#g-abrir").hidden=!url;$("#g-dica").hidden=!url;
   if(url){$("#g-abrir").href=url;
     try{const q=qrcode(0,"M");q.addData(url);q.make();$("#qrcode").innerHTML=q.createSvgTag({cellSize:6,margin:0,scalable:true,alt:"QR code para avaliar a OZZ no Google"})}
@@ -194,9 +203,12 @@ $("#st-pos").addEventListener("submit",async e=>{e.preventDefault();
   if(!ok)return erro("#err-pos","Não foi possível salvar neste aparelho. Tente de novo.");
   try{await Banco.kvDel("emAndamento")}catch(e){}
   $("#bn-retomar").hidden=true;
-  const n=visita.pos.indicacoes.length;
-  $("#fim-txt").textContent=`${visita.cliente.nome} · ${n} ${n===1?"indicação":"indicações"} · guardada neste aparelho.`;
+  const n=visita.pos.indicacoes.length, base=`${visita.cliente.nome} · ${n} ${n===1?"indicação":"indicações"}`, id=visita.id;
+  const fim=t=>{$("#fim-txt").textContent=`${base} · ${t}`};
+  fim(!SYNC_URL||!config.chave?"guardada neste aparelho.":navigator.onLine?"enviando para a planilha…":"guardada neste aparelho. Vai para a planilha quando houver internet.");
   showStep("fim");
+  if(SYNC_URL&&config.chave){await sincronizar();const v=await Banco.pegar(id).catch(()=>null);
+    if(visita===null||visita.id===id)fim(v&&v.sync==="ok"?"enviada para a planilha ✓":"guardada neste aparelho. Vai para a planilha quando houver internet.")}
 });
 $("#bt-nova").onclick=novaVisita;
 
@@ -204,10 +216,67 @@ $("#bt-nova").onclick=novaVisita;
 async function salvar(v){
   const copia=JSON.parse(JSON.stringify(v));
   copia.atualizadoEm=new Date().toISOString();
-  copia.sync="pendente"; /* será usado pela sincronização com a planilha */
-  try{await Banco.gravar(copia);const i=cache.findIndex(x=>x.id===copia.id);if(i>=0)cache[i]=copia;else cache.push(copia);return true}
+  copia.sync="pendente";
+  try{await Banco.gravar(copia);const i=cache.findIndex(x=>x.id===copia.id);if(i>=0)cache[i]=copia;else cache.push(copia);agendarSync();return true}
   catch(err){console.error(err);$("#bn-erro").hidden=false;return false}
 }
+
+/* ---------- sincronização com a planilha central ---------- */
+let sincronizando=false, erroSync="", timerSync=null, ultimaSync="";
+const pendentesSync=()=>cache.filter(v=>v.sync==="pendente"||v.sync==="apagar");
+function agendarSync(){clearTimeout(timerSync);timerSync=setTimeout(()=>sincronizar(),1500)}
+async function enviarPlanilha(corpo){
+  let r;
+  try{r=await fetch(SYNC_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({...corpo,chave:config.chave}),redirect:"follow",cache:"no-store"})}
+  catch(e){const err=new Error("rede");err.codigo="rede";throw err}
+  let j;try{j=await r.json()}catch(e){const err=new Error("resposta");err.codigo="resposta";throw err}
+  if(!j||!j.ok){const err=new Error(j&&j.erro||"falha");err.codigo=j&&j.erro||"falha";throw err}
+  return j;
+}
+const textoErro=c=>c==="chave"?"O código de sincronização está incorreto. Confira em Ajustes.":
+  c==="rede"?"Não foi possível falar com a planilha. Tentaremos de novo.":
+  c==="ocupado"?"A planilha estava ocupada. Tentaremos de novo em instantes.":"A planilha não respondeu como esperado. Tentaremos de novo.";
+async function sincronizar(){
+  if(sincronizando||!SYNC_URL||!config.chave||!navigator.onLine){atualizarStatus();return}
+  sincronizando=true;atualizarStatus();
+  try{
+    await recarregar();
+    const apagar=cache.filter(v=>v.sync==="apagar").map(v=>v.id);
+    if(apagar.length){const r=await enviarPlanilha({acao:"apagar",ids:apagar});await Banco.apagarVarias(r.ids||apagar)}
+    const envios=cache.filter(v=>v.sync==="pendente");
+    for(let i=0;i<envios.length;i+=8){
+      const lote=envios.slice(i,i+8);
+      const r=await enviarPlanilha({acao:"gravar",visitas:lote.map(({sync,sincronizadoEm,...resto})=>resto)});
+      const ok=new Set(r.ids||[]),agora=new Date().toISOString(),marcar=[];
+      for(const v of lote){if(!ok.has(v.id))continue;const a=await Banco.pegar(v.id);
+        if(a&&a.sync==="pendente"&&a.atualizadoEm===v.atualizadoEm)marcar.push({...a,sync:"ok",sincronizadoEm:agora})}
+      if(marcar.length)await Banco.gravarVarias(marcar);
+    }
+    ultimaSync=new Date().toISOString();Banco.kvSet("ultimaSync",ultimaSync).catch(()=>{});erroSync="";
+  }catch(e){erroSync=textoErro(e.codigo)}
+  sincronizando=false;await recarregar();atualizarStatus();
+  if(!$("#view-lista").hidden)renderLista();
+  if(!$("#view-ajustes").hidden)renderResumo();
+}
+const hora=iso=>{try{const d=new Date(iso),h=new Date();return d.toDateString()===h.toDateString()?`hoje às ${d.toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})}`:d.toLocaleString("pt-BR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})}catch(e){return""}};
+function textoStatus(){
+  const n=pendentesSync().length, nv=`${n} ${n===1?"visita":"visitas"}`;
+  if(!SYNC_URL)return["Visitas registradas <b>neste aparelho</b>. A planilha central ainda não foi ligada.",false];
+  if(!config.chave)return["Visitas registradas <b>neste aparelho</b>. Digite o código de sincronização em <b>Ajustes</b> para enviá-las à planilha central.",false];
+  if(sincronizando)return["Enviando visitas para a planilha central…",false];
+  if(erroSync&&n)return[`${esc(erroSync)} ${nv} aguardando envio.`,true];
+  if(n&&!navigator.onLine)return[`${nv} ${n===1?"aguarda":"aguardam"} internet para ir à planilha central.`,false];
+  if(n)return[`${nv} aguardando envio para a planilha central.`,true];
+  return[`Todas as visitas deste aparelho estão na planilha central${ultimaSync?` · última verificação ${hora(ultimaSync)}`:""}.`,false];
+}
+function atualizarStatus(){
+  const[t,botao]=textoStatus();
+  $$(".sync-status").forEach(el=>{el.querySelector(".sync-txt").innerHTML=t;const b=el.querySelector(".sync-bt");if(b){b.hidden=!botao||!navigator.onLine;b.disabled=sincronizando}});
+}
+$$(".sync-bt").forEach(b=>b.onclick=()=>sincronizar());
+window.addEventListener("online",()=>sincronizar());
+window.addEventListener("offline",atualizarStatus);
+setInterval(()=>{if(pendentesSync().length)sincronizar()},120000);
 
 /* ---------- retomar fechamento interrompido ---------- */
 async function verificarRetomada(){
@@ -222,7 +291,7 @@ async function verificarRetomada(){
 }
 
 /* ---------- lista ---------- */
-const ordenadas=()=>[...cache].filter(v=>v.respostas&&typeof v.respostas.nps==="number").sort((a,b)=>String(b.criadoEm).localeCompare(String(a.criadoEm)));
+const ordenadas=()=>[...cache].filter(v=>v.sync!=="apagar"&&v.respostas&&typeof v.respostas.nps==="number").sort((a,b)=>String(b.criadoEm).localeCompare(String(a.criadoEm)));
 const dataBR=iso=>{try{return new Date(iso).toLocaleDateString("pt-BR",{day:"2-digit",month:"2-digit",year:"2-digit"})}catch(e){return""}};
 const filtradas=vs=>vs.filter(v=>filtro==="todos"||(filtro==="aberta"?v.perfil==="detrator"&&v.tratativa!=="Resolvida":v.perfil===filtro));
 function renderLista(){
@@ -241,7 +310,7 @@ function renderLista(){
     <div class="stat"><div class="k">Tratativas abertas</div><div class="v" style="color:${abertas?"var(--bad)":"inherit"}">${abertas}</div></div>`;
   const lista=filtradas(vs);
   $("#tb").innerHTML=lista.map(v=>{const[pn,pc]=PERFIL[v.perfil]||["",""];
-    return `<tr data-id="${esc(v.id)}" tabindex="0"><td>${dataBR(v.criadoEm)}</td><td>${esc(v.cliente.nome)}${v.status!=="visita finalizada"?' <span class="chip pend">sem fechamento</span>':""}</td><td>${esc(v.cliente.plano||"–")}</td><td class="num">${v.respostas.nps}</td><td><span class="chip ${pc}">${pn}</span>${v.perfil==="detrator"?` <span class="muted" style="font-size:13px">${esc(v.tratativa||"")}</span>`:""}</td><td class="num">${((v.pos&&v.pos.indicacoes)||[]).length}</td><td>${v.brinde?esc(v.brinde.item)+(v.brinde.status==="Entregue"?" ✓":" · a entregar"):"–"}</td><td>${esc(v.visitante)}</td></tr>`}).join("");
+    return `<tr data-id="${esc(v.id)}" tabindex="0"><td>${dataBR(v.criadoEm)}</td><td>${esc(v.cliente.nome)}${v.status!=="visita finalizada"?' <span class="chip pend">sem fechamento</span>':""}${SYNC_URL&&config.chave&&v.sync==="pendente"?' <span class="chip pend">não enviada</span>':""}</td><td>${esc(v.cliente.plano||"–")}</td><td class="num">${v.respostas.nps}</td><td><span class="chip ${pc}">${pn}</span>${v.perfil==="detrator"?` <span class="muted" style="font-size:13px">${esc(v.tratativa||"")}</span>`:""}</td><td class="num">${((v.pos&&v.pos.indicacoes)||[]).length}</td><td>${v.brinde?esc(v.brinde.item)+(v.brinde.status==="Entregue"?" ✓":" · a entregar"):"–"}</td><td>${esc(v.visitante)}</td></tr>`}).join("");
   $("#tb-vazio").hidden=lista.length>0;
   $("#tb-vazio").innerHTML=t?"Nenhuma visita neste filtro.":"Nenhuma visita registrada ainda. As pesquisas aparecem aqui assim que o primeiro cliente assinar em <b>Nova visita</b>.";
   $("#bt-exportar").textContent=`Exportar planilha (${lista.length})`;
@@ -268,7 +337,20 @@ function abrirDetalhe(id){
     <div class="sec"><h3>Respostas</h3>${kv([["Motivo da nota",r.motivo],...ETAPAS.map(([k,t])=>[t,r.etapas&&r.etapas[k]?r.etapas[k]+" de 5":""]),["Economia vs. prometido",r.economia],["Vê a economia na fatura",r.entendeFatura],["Mais valoriza",[...(r.valoriza||[]),r.valorizaOutro].filter(Boolean).join("; ")],["Sugestão de melhoria",r.melhoria],["Autoriza depoimento",r.depoimento],["Avaliação Google",v.google]])}</div>
     <div class="sec"><h3>Fechamento</h3>${kv([["Falta para nota 10",p.faltaPara10],["Problema relatado",p.problema],["Próximo passo",p.proximoPasso],["Pode citar o cliente na indicação",p.em?sim(p.autorizaCitar):""],["Conversou sobre economia",sim(v.relacionamento&&v.relacionamento.economia)],["Tirou dúvidas da fatura",sim(v.relacionamento&&v.relacionamento.fatura)],["Confirmou contato",sim(v.relacionamento&&v.relacionamento.contato)],["Anotações",v.anotacoes]])}
       ${(p.indicacoes||[]).length?`<div class="tbl"><table><thead><tr><th>Indicação</th><th>Telefone</th><th>Relação</th></tr></thead><tbody>${p.indicacoes.map(i=>`<tr style="cursor:auto"><td>${esc(i.nome)}</td><td>${esc(i.telefone)}</td><td>${esc(i.relacao)}</td></tr>`).join("")}</tbody></table></div>`:'<p class="muted" style="margin:0">Sem indicações.</p>'}</div>
-    <div class="sec"><h3>Assinatura</h3>${v.assinatura&&v.assinatura.imagem?`<img class="sigimg" src="${esc(v.assinatura.imagem)}" alt="Assinatura de ${esc(v.assinatura.nome)}">`:""}<p style="margin:0">${esc(v.assinatura&&v.assinatura.nome)} · ${v.assinatura?new Date(v.assinatura.em).toLocaleString("pt-BR"):""}</p></div>`;
+    <div class="sec"><h3>Assinatura</h3>${v.assinatura&&v.assinatura.imagem?`<img class="sigimg" src="${esc(v.assinatura.imagem)}" alt="Assinatura de ${esc(v.assinatura.nome)}">`:""}<p style="margin:0">${esc(v.assinatura&&v.assinatura.nome)} · ${v.assinatura?new Date(v.assinatura.em).toLocaleString("pt-BR"):""}</p></div>
+    <div class="sec danger"><h3>Apagar visita</h3><p class="muted" style="margin:0;font-size:14px">Use para visitas de teste ou registradas por engano. ${SYNC_URL&&config.chave?"Ela também sai da planilha central. ":""}Não dá para desfazer.</p>
+      <div class="row" id="d-apagar-1"><button class="btn ghost sm bad" type="button" id="d-apagar">Apagar esta visita</button></div>
+      <div class="row" id="d-apagar-2" hidden><b style="margin-right:auto">Apagar a visita de ${esc(v.cliente.nome)}?</b><button class="btn ghost sm" type="button" id="d-apagar-nao">Cancelar</button><button class="btn sm badfill" type="button" id="d-apagar-sim">Sim, apagar</button></div></div>`;
+  $("#d-apagar").onclick=()=>{$("#d-apagar-1").hidden=true;$("#d-apagar-2").hidden=false};
+  $("#d-apagar-nao").onclick=()=>{$("#d-apagar-1").hidden=false;$("#d-apagar-2").hidden=true};
+  $("#d-apagar-sim").onclick=async()=>{
+    try{
+      if(v.sincronizadoEm||v.sync==="ok"){const marcada={...v,sync:"apagar"};await Banco.gravar(marcada)}
+      else await Banco.apagarVarias([v.id]);
+    }catch(e){return}
+    if(visita&&visita.id===v.id)visita=null;
+    await recarregar();$("#drawer").hidden=true;renderLista();atualizarStatus();agendarSync();
+  };
   const fv=$("#d-fechar-visita");
   if(fv)fv.onclick=()=>{$("#drawer").hidden=true;showView("nova");novaVisita();visita=JSON.parse(JSON.stringify(v));irPos()};
   const sel=$("#d-trat");
@@ -321,9 +403,10 @@ $("#bt-exportar-todas").onclick=async()=>{await recarregar();const vs=ordenadas(
 
 const msgDados=t=>{$("#d-msg").textContent=t;$("#d-msg").hidden=false};
 $("#bt-backup").onclick=async()=>{await recarregar();
-  const dados={app:"ozz-posvenda",versao:VERSAO_APP,geradoEm:new Date().toISOString(),visitas:cache};
+  const vs=cache.filter(v=>v.sync!=="apagar");
+  const dados={app:"ozz-posvenda",versao:VERSAO_APP,geradoEm:new Date().toISOString(),visitas:vs};
   await entregarArquivo(`ozz-backup-${hoje()}.json`,new Blob([JSON.stringify(dados)],{type:"application/json"}));
-  msgDados(`Backup gerado com ${cache.length} ${cache.length===1?"visita":"visitas"}.`)};
+  msgDados(`Backup gerado com ${vs.length} ${vs.length===1?"visita":"visitas"}.`)};
 $("#bt-restaurar").onclick=()=>$("#in-restaurar").click();
 $("#in-restaurar").onchange=async e=>{const f=e.target.files[0];e.target.value="";if(!f)return;
   try{const d=JSON.parse(await f.text());const vs=Array.isArray(d)?d:d.visitas;
@@ -338,7 +421,8 @@ $("#in-restaurar").onchange=async e=>{const f=e.target.files[0];e.target.value="
   catch(err){msgDados("Este arquivo não parece um backup do app OZZ Pós-venda.")}};
 
 function renderResumo(){
-  const t=cache.length,pend=cache.filter(v=>v.status!=="visita finalizada").length;
+  atualizarStatus();
+  const vs=cache.filter(v=>v.sync!=="apagar"),t=vs.length,pend=vs.filter(v=>v.status!=="visita finalizada").length;
   $("#d-resumo").textContent=t?`${t} ${t===1?"visita guardada":"visitas guardadas"} neste aparelho${pend?`, ${pend} sem fechamento`:""}.`:"Nenhuma visita guardada neste aparelho ainda.";
 }
 
@@ -346,11 +430,24 @@ function renderResumo(){
 $("#f-ajustes").addEventListener("submit",async e=>{e.preventDefault();
   const url=$("#a_google").value.trim(),m=$("#a_msg");
   if(url&&!/^https:\/\//.test(url)){m.textContent="O link precisa começar com https://";m.hidden=false;return}
-  config={googleUrl:url,visitante:$("#a_visitante").value.trim()};
+  const chaveAntes=config.chave;
+  config={googleUrl:url,visitante:$("#a_visitante").value.trim(),chave:$("#a_chave").value.trim().toUpperCase()};
+  $("#a_chave").value=config.chave;
   if(!$("#c_visitante").value.trim())$("#c_visitante").value=config.visitante;
   try{await Banco.kvSet("config",config);m.textContent="Ajustes salvos."}catch(err){m.textContent="Não foi possível salvar os ajustes."}
   m.hidden=false;
+  if(config.chave!==chaveAntes){erroSync="";atualizarStatus();if(config.chave)sincronizar()}
 });
+$("#bt-testar").onclick=async()=>{
+  const m=$("#a_msg"),k=$("#a_chave").value.trim().toUpperCase();m.hidden=false;
+  if(!k){m.textContent="Digite o código de sincronização.";return}
+  if(!navigator.onLine){m.textContent="Sem internet agora. Teste quando o aparelho estiver conectado.";return}
+  m.textContent="Testando conexão…";
+  const salva=config.chave;config.chave=k;
+  try{const r=await enviarPlanilha({acao:"ping"});m.textContent=`Conectado à planilha “${r.planilha||"OZZ"}”. Toque em Salvar ajustes para guardar o código.`}
+  catch(e){m.textContent=e.codigo==="chave"?"Código incorreto. Confira o código na planilha (menu OZZ Visitas → Mostrar código).":"Não foi possível falar com a planilha agora. Verifique a internet e tente de novo."}
+  finally{config.chave=salva}
+};
 
 /* ---------- instalação e atualização (PWA) ---------- */
 const instalado=window.matchMedia("(display-mode: standalone)").matches||navigator.standalone===true;
@@ -377,8 +474,12 @@ if(navigator.storage&&navigator.storage.persist){navigator.storage.persist().cat
 /* ---------- início ---------- */
 (async()=>{
   try{await Banco.abrir()}catch(e){$("#bn-erro").hidden=false}
-  config={googleUrl:"",visitante:"",...(await Banco.kvGet("config",{}))};
+  config={googleUrl:"",visitante:"",chave:"",...(await Banco.kvGet("config",{}))};
+  ultimaSync=await Banco.kvGet("ultimaSync","");
   await recarregar();
+  atualizarStatus();
+  sincronizar();
+  document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible")sincronizar()});
   $("#versao").textContent=`OZZ Pós-venda · versão ${VERSAO_APP}${instalado?" · instalado":""}`;
   novaVisita();
   verificarRetomada();
