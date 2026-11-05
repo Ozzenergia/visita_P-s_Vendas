@@ -1,4 +1,4 @@
-# OZZ Pós-venda: app offline (PWA) — versão 1.1.0
+# OZZ Pós-venda: app offline (PWA) — versão 1.1.1
 
 O app guarda as visitas **no próprio aparelho** e funciona sem internet.
 Quando há internet, envia as visitas para a **planilha central** (Planilha Google + Apps Script).

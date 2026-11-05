@@ -1,13 +1,13 @@
 /* OZZ Pós-venda — versão PWA (dados guardados no próprio aparelho) */
 (function(){
 "use strict";
-const VERSAO_APP="1.1.0";
+const VERSAO_APP="1.1.1";
 
 /* Endereço do script da planilha central (Apps Script → Implantar → App da Web → URL).
    Pode ficar público: sem o código de sincronização, digitado em Ajustes, ninguém grava nada. */
-const SYNC_URL="";
+const SYNC_URL="https://script.google.com/macros/s/AKfycbyAFuaM2e7ILmVxUIgCUstXu8xfYYLo7tVRXMjvZwT6dseigAZfn6_q-x8cMdyTCDO9/exec";
 /* Link de avaliação da OZZ no Google usado quando o aparelho não tiver um link próprio em Ajustes. */
-const GOOGLE_PADRAO="";
+const GOOGLE_PADRAO="https://g.page/r/CVjA374R27YEEAI/review";
 
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
